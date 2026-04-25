@@ -1,0 +1,372 @@
+﻿@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-white: #fff;
+  --color-black: #000;
+  --color-transparent: transparent;
+  --color-blue-300: #93c5fd;
+  --color-blue-400: #60a5fa;
+  --color-blue-500: #3b82f6;
+  --color-indigo-300: #a5b4fc;
+  --color-violet-200: #ddd6fe;
+  --animate-aurora: aurora 60s linear infinite;
+}
+
+@keyframes aurora {
+  from {
+    background-position: 50% 50%, 50% 50%;
+  }
+  to {
+    background-position: 350% 50%, 350% 50%;
+  }
+}
+
+/* Auth.html keyframes */
+@keyframes pulseRing {
+  0%, 100% { opacity: .55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes sweep {
+  0%   { transform: translateY(-100%); opacity:0; }
+  15%  { opacity:1; }
+  85%  { opacity:1; }
+  100% { transform: translateY(100%); opacity:0; }
+}
+
+@keyframes caret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* Sentinel — evacuation route flow + threat pulse */
+@keyframes evac-flow {
+  to { stroke-dashoffset: -8; }
+}
+@keyframes threat-pulse-kf {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,.55); }
+  50%      { box-shadow: 0 0 24px 6px rgba(239,68,68,.35); }
+}
+.threat-pulse { animation: threat-pulse-kf 1.6s ease-in-out infinite; }
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.625rem;
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.439 0 0);
+}
+
+@theme inline {
+  --font-sans: var(--font-inter), 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+.title-monolith, .text-metal-tint {
+  background-image: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    #f5f5f7 38%,
+    #c9c9d1 58%,
+    #8a8a94 78%,
+    #c6c6cf 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow:
+    0 0 40px rgba(255,255,255,0.10),
+    0 0 90px rgba(140,170,255,0.10);
+  filter: drop-shadow(0 2px 1px rgba(0,0,0,0.55))
+          drop-shadow(0 0 34px rgba(255,255,255,0.06));
+  letter-spacing: -0.055em;
+  line-height: 0.86;
+}
+.title-monolith::selection, .title-monolith *::selection,
+.text-metal-tint::selection, .text-metal-tint *::selection { color:#fff; }
+
+.grain {
+  position:fixed; inset:0; pointer-events:none; z-index:6; mix-blend-mode:overlay; opacity:.32;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.04) 0 1px, transparent 1px 3px),
+    radial-gradient(circle at 20% 10%, rgba(255,255,255,.05), transparent 40%),
+    radial-gradient(circle at 80% 90%, rgba(0,0,0,.35), transparent 50%);
+}
+.vignette {
+  position:fixed; inset:0; pointer-events:none; z-index:5;
+  background: radial-gradient(ellipse at 50% 55%, transparent 30%, rgba(0,0,0,.7) 100%);
+}
+
+.btn-authorize {
+  position:relative; isolation:isolate;
+  background: linear-gradient(180deg, #ff1f3a 0%, #c40018 100%);
+  border:1px solid rgba(255,80,100,.6);
+  box-shadow:
+    0 0 0 1px rgba(255,40,64,.35),
+    0 0 28px 3px rgba(255,40,64,.55),
+    0 0 72px 8px rgba(255,20,40,.4),
+    inset 0 1px 0 rgba(255,255,255,.22),
+    inset 0 -10px 20px rgba(0,0,0,.35);
+  transition: transform .15s ease, filter .25s ease;
+  color: white;
+}
+.btn-authorize::before {
+  content:""""; position:absolute; inset:-3px; border-radius:inherit; z-index:-1;
+  background: radial-gradient(60% 80% at 50% 50%, rgba(255,40,64,.6), transparent 70%);
+  filter: blur(16px);
+  animation: pulseRing 2.4s ease-in-out infinite;
+}
+.btn-authorize::after {
+  content:""""; position:absolute; inset:0; border-radius:inherit; overflow:hidden;
+  background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,.35) 50%, transparent 70%);
+  background-size:200% 100%;
+  mix-blend-mode:screen;
+  animation: shimmer 3.2s linear infinite;
+  pointer-events:none;
+}
+.btn-authorize:hover { transform:translateY(-1px); filter:brightness(1.08); }
+.btn-authorize:active { transform:translateY(0); filter:brightness(.95); }
+
+.btn-authed {
+  background: linear-gradient(180deg, #22d37a 0%, #0f8f4d 100%);
+  border-color: rgba(80,255,170,.5);
+  box-shadow:
+    0 0 0 1px rgba(40,220,120,.35),
+    0 0 28px 3px rgba(40,220,120,.55),
+    0 0 72px 8px rgba(20,200,110,.35),
+    inset 0 1px 0 rgba(255,255,255,.22),
+    inset 0 -10px 20px rgba(0,0,0,.35);
+}
+.btn-authed::before {
+  background: radial-gradient(60% 80% at 50% 50%, rgba(40,220,120,.6), transparent 70%);
+}
+
+.dot {width:6px;height:6px;border-radius:9999px;background:#f43f5e;box-shadow:0 0 10px #f43f5e}
+.dot.ok {background:#22d37a;box-shadow:0 0 10px #22d37a}
+.dot.idle {background:#f59e0b;box-shadow:0 0 10px #f59e0b}
+.blink {animation:blink 1.4s ease-in-out infinite}
+.caret::after {content:""▊"";margin-left:4px;animation:caret 1s steps(1) infinite;color:#e7e5e4}
+
+.hud-tick {
+  position:fixed; z-index:12; pointer-events:none;
+  width:18px; height:18px; border-color: rgba(255,255,255,.28);
+}
+.hud-tick.tl { top:18px; left:18px; border-left:1px solid; border-top:1px solid; }
+.hud-tick.tr { top:18px; right:18px; border-right:1px solid; border-top:1px solid; }
+.hud-tick.bl { bottom:18px; left:18px; border-left:1px solid; border-bottom:1px solid; }
+.hud-tick.br { bottom:18px; right:18px; border-right:1px solid; border-bottom:1px solid; }
+
+.scanline {
+  position:fixed; inset:0; pointer-events:none; z-index:7;
+  background: linear-gradient(180deg, transparent 0%, rgba(180,200,255,.045) 50%, transparent 100%);
+  height:100vh;
+  mix-blend-mode: screen;
+  animation: sweep 7s linear infinite;
+}
+
+.bg-tactical {
+  background: radial-gradient(ellipse 60% 45% at 15% 0%, rgba(59,130,246,.12), transparent 70%),
+              radial-gradient(ellipse 40% 40% at 85% 100%, rgba(239,68,68,.08), transparent 70%),
+              transparent;
+}
+
+/* App shell — applied to dashboard / modules / sandbox pages.
+   Fluid wider container plus a bumped base font so the UI fills the screen
+   on 1080p+ displays without leaving acres of empty space. The auth landing
+   page intentionally does NOT use this class. */
+.app-shell {
+  font-size: 16.5px;
+  line-height: 1.55;
+}
+.app-shell .app-shell-container {
+  width: 100%;
+  max-width: min(1720px, 95vw);
+  margin-left: auto;
+  margin-right: auto;
+}
+@media (min-width: 1600px) {
+  .app-shell { font-size: 17.5px; }
+}
+@media (min-width: 1920px) {
+  .app-shell { font-size: 18px; }
+  .app-shell .app-shell-container { max-width: min(1840px, 95vw); }
+}
+
+/* Liquid Glass — module-card variant. iOS-style transparent glass:
+     • Very low white tint so the aurora reads through
+     • Deep backdrop blur + boosted saturation for the "frosted" feel
+     • Four-sided inset bevel (top bright, bottom faint) for depth
+     • Soft outer shadow for the floating effect
+     • iOS ease-out curve, no overshoot, snappy 220ms response */
+.liquid-glass-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  background: linear-gradient(135deg, rgba(255,255,255,.07), rgba(255,255,255,.02));
+  border: 1px solid rgba(255,255,255,.10);
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  box-shadow:
+    0 8px 28px rgba(0,0,0,.22),
+    0 0 0 0.5px rgba(255,255,255,.04),
+    inset 0 1px 0 0 rgba(255,255,255,.28),
+    inset 0 -1px 0 0 rgba(255,255,255,.05),
+    inset 1px 0 0 0 rgba(255,255,255,.10),
+    inset -1px 0 0 0 rgba(255,255,255,.04);
+  transition: transform .22s cubic-bezier(0.22, 1, 0.36, 1),
+              border-color .22s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow .22s cubic-bezier(0.22, 1, 0.36, 1),
+              background .22s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: 0s;
+  will-change: transform, box-shadow;
+}
+.liquid-glass-card:hover {
+  transform: translateY(-2px);
+  background: linear-gradient(135deg, rgba(255,255,255,.11), rgba(255,255,255,.04));
+  border-color: rgba(255,255,255,.18);
+  box-shadow:
+    0 14px 40px rgba(0,0,0,.32),
+    0 0 36px rgba(120,160,255,.06),
+    0 0 0 0.5px rgba(255,255,255,.08),
+    inset 0 1px 0 0 rgba(255,255,255,.42),
+    inset 0 -1px 0 0 rgba(255,255,255,.08),
+    inset 1px 0 0 0 rgba(255,255,255,.18),
+    inset -1px 0 0 0 rgba(255,255,255,.06);
+}
+.liquid-glass-card > * { position: relative; z-index: 1; }
+
+/* Liquid Glass — panels read clearly over the aurora background.
+     base element  → tint gradient + drop shadow + inset highlight + backdrop blur
+     ::before       → cursor-follow radial highlight on hover
+   Ad-hoc surfaces with the SVG distortion treatment use the <LiquidGlass />
+   wrapper component instead. */
+.bento-card {
+  position: relative;
+  background: linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.055));
+  border: 1px solid rgba(255,255,255,.10);
+  color: rgba(245,245,244,1);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  box-shadow:
+    0 6px 16px rgba(0,0,0,.35),
+    0 0 28px rgba(0,0,0,.18),
+    inset 1.5px 1.5px 1px 0 rgba(255,255,255,.18),
+    inset -1px -1px 1px 1px rgba(255,255,255,.06);
+  transition: transform .35s ease, border-color .3s ease, box-shadow .35s ease;
+}
+
+.bento-card::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    600px circle at var(--mx, 50%) var(--my, 50%),
+    rgba(255,255,255,0.10),
+    transparent 40%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.bento-card:hover::before { opacity: 1; }
+
+.bento-card:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  transform: translateY(-2px);
+  box-shadow:
+    0 10px 36px rgba(0,0,0,.55),
+    0 0 32px rgba(0,0,0,.22),
+    inset 1.5px 1.5px 1px 0 rgba(255,255,255,.22),
+    inset -1px -1px 1px 1px rgba(255,255,255,.08);
+}
+
+/* Ensure direct children sit above the ::before hover highlight */
+.bento-card > * { position: relative; z-index: 1; }
