@@ -74,18 +74,19 @@ const MODULES = [
 ];
 
 function Heartbeat() {
-  const [time, setTime] = useState(() => {
-    const d = new Date();
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
-  });
+  const [time, setTime] = useState("--:--:--");
 
   useEffect(() => {
+    const formatNow = () => {
+    const d = new Date();
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+    };
+
+    setTime(formatNow());
     const id = setInterval(() => {
-      const d = new Date();
-      setTime(
-        `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`
-      );
+      setTime(formatNow());
     }, 1000);
+
     return () => clearInterval(id);
   }, []);
 
