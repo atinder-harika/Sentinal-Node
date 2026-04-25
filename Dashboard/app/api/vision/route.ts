@@ -1,15 +1,4 @@
-/**
- * POST /api/vision  — PRD §7.1
- *
- * In:  { image_base64: "data:image/jpeg;base64,..." }
- * Out: { success, threat_detected, threat_type, confidence, raw_labels }
- *
- * Strategy: if Google Cloud Vision creds are present, call the real
- * ImageAnnotatorClient. Otherwise return a deterministic mock so the UI
- * still works before keys are plugged in.
- */
 import { NextRequest, NextResponse } from "next/server";
-import { env, wired, THREAT_KEYWORDS, THREAT_CONFIDENCE_THRESHOLD } from "@/lib/sentinel-env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,141 +10,194 @@ interface VisionPayload {
 interface VisionResponse {
   success: boolean;
   threat_detected: boolean;
-  threat_type: string | null;
+  threat_type: string;
   confidence: number;
-  raw_labels: string[];
-  source: "google-vision" | "mock";
-  error?: string;
 }
 
-function classify(labels: Array<{ description: string; score: number }>) {
-  let best: { type: string; confidence: number; description: string } | null = null;
-  for (const l of labels) {
-    for (const k of THREAT_KEYWORDS) {
-      if (k.match.test(l.description)) {
-        if (!best || l.score > best.confidence) {
-          best = { type: k.type, confidence: l.score, description: l.description };
-        }
+interface VisionLikelihoodFace {
+  sorrowLikelihood?: string;
+  surpriseLikelihood?: string;
+}
+
+interface VisionLabel {
+  description?: string;
+  score?: number;
+}
+
+function normalizeBase64Image(input: string): string {
+  return input.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "").trim();
+}
+
+function hasAnyLabel(labels: string[], candidates: string[]): boolean {
+  const lowered = labels.map((l) => l.toLowerCase());
+  return candidates.some((candidate) => lowered.includes(candidate.toLowerCase()));
+}
+
+function clampConfidence(value: number): number {
+  if (Number.isNaN(value) || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, Number(value.toFixed(4))));
+}
+
+function extractThreat(
+  labels: VisionLabel[],
+  faceAnnotations: VisionLikelihoodFace[]
+): { threat_detected: boolean; threat_type: string; confidence: number } {
+  const labelTexts = labels
+    .map((l) => (l.description ?? "").trim())
+    .filter((v) => v.length > 0);
+
+  const findBestLabelScore = (terms: string[]): number => {
+    let best = 0;
+    const lookup = new Set(terms.map((t) => t.toLowerCase()));
+    for (const label of labels) {
+      const text = (label.description ?? "").trim().toLowerCase();
+      if (lookup.has(text)) {
+        best = Math.max(best, label.score ?? 0);
       }
     }
+    return best;
+  };
+
+  const gunTerms = ["Gun", "Weapon", "Firearm", "Assault rifle"];
+  const fireTerms = ["Fire", "Flame", "Explosion"];
+  const earthquakeTerms = ["Rubble", "Debris", "Blur", "Motion blur"];
+  const injuryTerms = ["Blood", "Injury"];
+
+  const faceDistress = faceAnnotations.some((face) => {
+    const sorrow = face.sorrowLikelihood ?? "";
+    const surprise = face.surpriseLikelihood ?? "";
+    return (
+      sorrow === "LIKELY" ||
+      sorrow === "VERY_LIKELY" ||
+      surprise === "LIKELY" ||
+      surprise === "VERY_LIKELY"
+    );
+  });
+
+  const hasGun = hasAnyLabel(labelTexts, gunTerms);
+  const hasFire = hasAnyLabel(labelTexts, fireTerms);
+  const hasEarthquake = hasAnyLabel(labelTexts, earthquakeTerms);
+  const hasInjuryLabel = hasAnyLabel(labelTexts, injuryTerms);
+  const hasDistressedCivilian = faceDistress || hasInjuryLabel;
+
+  // Priority: Gunman > Fire > Earthquake > Distressed Civilian
+  if (hasGun) {
+    return {
+      threat_detected: true,
+      threat_type: "Active Shooter",
+      confidence: clampConfidence(findBestLabelScore(gunTerms) || 0.9),
+    };
   }
-  return best;
+
+  if (hasFire) {
+    return {
+      threat_detected: true,
+      threat_type: "Fire Detected",
+      confidence: clampConfidence(findBestLabelScore(fireTerms) || 0.85),
+    };
+  }
+
+  if (hasEarthquake) {
+    return {
+      threat_detected: true,
+      threat_type: "Seismic Event / Structural Damage",
+      confidence: clampConfidence(findBestLabelScore(earthquakeTerms) || 0.8),
+    };
+  }
+
+  if (hasDistressedCivilian) {
+    const labelConfidence = findBestLabelScore(injuryTerms);
+    const faceConfidence = faceDistress ? 0.78 : 0;
+    return {
+      threat_detected: true,
+      threat_type: "Civilian Casualty / Distressed Person",
+      confidence: clampConfidence(Math.max(labelConfidence, faceConfidence)),
+    };
+  }
+
+  return {
+    threat_detected: false,
+    threat_type: "None",
+    confidence: 0,
+  };
 }
 
 export async function POST(req: NextRequest) {
   try {
+    if (!process.env.GCP_VISION_API_KEY) {
+      throw new Error("Missing GCP_VISION_API_KEY");
+    }
+
     const body = (await req.json()) as VisionPayload;
-    if (!body.image_base64) {
-      return NextResponse.json<VisionResponse>(
-        {
-          success: false,
-          threat_detected: false,
-          threat_type: null,
-          confidence: 0,
-          raw_labels: [],
-          source: "mock",
-          error: "image_base64 missing",
-        },
-        { status: 400 }
-      );
+    if (!body?.image_base64 || typeof body.image_base64 !== "string") {
+      throw new Error("Invalid payload: image_base64 is required");
     }
 
-    // Strip the data URL prefix if present.
-    const b64 = body.image_base64.replace(/^data:image\/[a-zA-Z]+;base64,/, "");
+    const imageContent = normalizeBase64Image(body.image_base64);
+    if (!imageContent) {
+      throw new Error("Invalid payload: image_base64 is empty");
+    }
 
-    if (wired.vision) {
-      try {
-        // Lazy-load to avoid bundling Vision client when not wired.
-        const { ImageAnnotatorClient } = await import("@google-cloud/vision");
-        const credentials = env.GCP_SERVICE_ACCOUNT_JSON
-          ? JSON.parse(env.GCP_SERVICE_ACCOUNT_JSON)
-          : undefined;
-
-        const client = new ImageAnnotatorClient(
-          credentials
-            ? { credentials, projectId: env.GCP_PROJECT_ID || credentials.project_id }
-            : { apiKey: env.GCP_VISION_KEY }
-        );
-
-        const [result] = await client.annotateImage({
-          image: { content: b64 },
-          features: [
-            { type: "LABEL_DETECTION", maxResults: 12 },
-            { type: "SAFE_SEARCH_DETECTION" },
-            { type: "OBJECT_LOCALIZATION", maxResults: 8 },
-          ],
-        });
-
-        const labels = (result.labelAnnotations ?? []).map((l) => ({
-          description: l.description ?? "",
-          score: l.score ?? 0,
-        }));
-        const objects = (result.localizedObjectAnnotations ?? []).map((o) => ({
-          description: o.name ?? "",
-          score: o.score ?? 0,
-        }));
-        const all = [...labels, ...objects];
-        const verdict = classify(all);
-        const violenceLikelihood = result.safeSearchAnnotation?.violence;
-        const violentBonus =
-          violenceLikelihood === "VERY_LIKELY" ? 0.15 :
-          violenceLikelihood === "LIKELY" ? 0.08 : 0;
-
-        const confidence = verdict ? Math.min(1, verdict.confidence + violentBonus) : 0;
-        return NextResponse.json<VisionResponse>({
-          success: true,
-          threat_detected: !!verdict && confidence >= THREAT_CONFIDENCE_THRESHOLD,
-          threat_type: verdict?.type ?? null,
-          confidence,
-          raw_labels: all.map((l) => l.description).filter(Boolean),
-          source: "google-vision",
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Vision SDK error";
-        return NextResponse.json<VisionResponse>(
+    const endpoint = `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GCP_VISION_API_KEY}`;
+    const googleResponse = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify({
+        requests: [
           {
-            success: false,
-            threat_detected: false,
-            threat_type: null,
-            confidence: 0,
-            raw_labels: [],
-            source: "google-vision",
-            error: msg,
+            image: { content: imageContent },
+            features: [
+              { type: "LABEL_DETECTION", maxResults: 15 },
+              { type: "FACE_DETECTION", maxResults: 5 },
+            ],
           },
-          { status: 502 }
-        );
-      }
+        ],
+      }),
+    });
+
+    if (!googleResponse.ok) {
+      const failureText = await googleResponse.text();
+      throw new Error(`Google Vision request failed: ${googleResponse.status} ${failureText}`);
     }
 
-    // ──────────────── Mock fallback ────────────────
-    // Hash the first 512 bytes of the image so the same frame returns the
-    // same mock result. Triggers a "Fire" threat ~35% of the time.
-    const seed = b64.slice(0, 512).split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-    const triggerThreat = (seed % 100) < 35;
-    const mockLabels = triggerThreat
-      ? ["Fire", "Smoke", "Heat", "Building", "Indoor"]
-      : ["Person", "Indoor", "Wall", "Light", "Floor"];
-    const verdict = classify(mockLabels.map((d) => ({ description: d, score: 0.92 })));
+    const result = (await googleResponse.json()) as {
+      responses?: Array<{
+        labelAnnotations?: VisionLabel[];
+        faceAnnotations?: VisionLikelihoodFace[];
+        error?: { message?: string };
+      }>;
+    };
+
+    const firstResponse = result.responses?.[0];
+    if (!firstResponse) {
+      throw new Error("Google Vision returned no responses");
+    }
+
+    if (firstResponse.error?.message) {
+      throw new Error(`Google Vision API error: ${firstResponse.error.message}`);
+    }
+
+    const verdict = extractThreat(firstResponse.labelAnnotations ?? [], firstResponse.faceAnnotations ?? []);
 
     return NextResponse.json<VisionResponse>({
       success: true,
-      threat_detected: !!verdict,
-      threat_type: verdict?.type ?? null,
-      confidence: verdict ? 0.92 : 0.35,
-      raw_labels: mockLabels,
-      source: "mock",
+      threat_detected: verdict.threat_detected,
+      threat_type: verdict.threat_type,
+      confidence: verdict.confidence,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Unknown error";
+    const message = e instanceof Error ? e.message : "Unknown error";
     return NextResponse.json<VisionResponse>(
       {
         success: false,
         threat_detected: false,
-        threat_type: null,
+        threat_type: "None",
         confidence: 0,
-        raw_labels: [],
-        source: "mock",
-        error: msg,
       },
       { status: 500 }
     );
