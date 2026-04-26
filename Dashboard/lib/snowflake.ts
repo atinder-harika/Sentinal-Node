@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Connection, RowStatement } from "snowflake-sdk";
 
 export interface ThreatLogRow {
@@ -76,7 +77,7 @@ export async function executeSnowflake<T = Record<string, unknown>>(
   return new Promise<T[]>((resolve, reject) => {
     connection.execute({
       sqlText,
-      binds,
+      binds: binds as never,
       complete: (err: Error | undefined, _stmt: RowStatement, rows: T[] | undefined) => {
         if (err) {
           reject(err);
@@ -93,21 +94,20 @@ export async function insertCrisisEvent(input: {
   event_type: string;
   threat_details: string;
 }) {
+  // CRISIS_EVENTS.ID is NOT NULL with no default. Snowflake rejects
+  // UUID_STRING() inline in a VALUES clause, so generate the UUID in Node.
+  const id = randomUUID();
   await executeSnowflake(
-    `INSERT INTO SENTINEL_DB.PUBLIC.CRISIS_EVENTS (NODE_ID, EVENT_TYPE, THREAT_DETAILS)
-     VALUES (?, ?, ?)`,
-    [input.node_id, input.event_type, input.threat_details]
+    "INSERT INTO SENTINEL_DB.PUBLIC.CRISIS_EVENTS (ID, NODE_ID, EVENT_TYPE, THREAT_DETAILS) VALUES (?, ?, ?, ?)",
+    [id, input.node_id, input.event_type, input.threat_details]
   );
 
-  return { success: true };
+  return { success: true, id };
 }
 
 export async function getActiveCrisisEvents() {
   return executeSnowflake<ThreatLogRow>(
-    `SELECT *
-     FROM CRISIS_EVENTS
-     WHERE IS_ACTIVE = TRUE
-     ORDER BY TIMESTAMP DESC`
+    "SELECT * FROM CRISIS_EVENTS WHERE IS_ACTIVE = TRUE ORDER BY TIMESTAMP DESC"
   );
 }
 
@@ -116,21 +116,18 @@ export async function logThreat(row: {
   event_type: string;
   details: string;
 }) {
+  const id = randomUUID();
   await executeSnowflake(
-    `INSERT INTO SENTINEL_DB.PUBLIC.CRISIS_EVENTS (NODE_ID, EVENT_TYPE, THREAT_DETAILS)
-     VALUES (?, ?, ?)`,
-    [row.node_id, row.event_type, row.details]
+    "INSERT INTO SENTINEL_DB.PUBLIC.CRISIS_EVENTS (ID, NODE_ID, EVENT_TYPE, THREAT_DETAILS) VALUES (?, ?, ?, ?)",
+    [id, row.node_id, row.event_type, row.details]
   );
 
-  return { success: true };
+  return { success: true, id };
 }
 
 export async function fetchHistory(limit = 50) {
   const rows = await executeSnowflake<ThreatLogRow>(
-    `SELECT TIMESTAMP, NODE_ID, EVENT_TYPE, THREAT_DETAILS, IS_ACTIVE
-     FROM SENTINEL_DB.PUBLIC.CRISIS_EVENTS
-     ORDER BY TIMESTAMP DESC
-     LIMIT ?`,
+    "SELECT TIMESTAMP, NODE_ID, EVENT_TYPE, THREAT_DETAILS, IS_ACTIVE FROM SENTINEL_DB.PUBLIC.CRISIS_EVENTS ORDER BY TIMESTAMP DESC LIMIT ?",
     [limit]
   );
 

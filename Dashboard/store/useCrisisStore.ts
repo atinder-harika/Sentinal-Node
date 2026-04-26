@@ -1,28 +1,31 @@
 "use client";
 
-/**
- * Sentinel Node — Crisis Store (PRD §4.2)
- * Global state management via Zustand. The single source of truth that the
- * dashboard, NodeGrid, IncidentLog, LiveFeed, TopNav DEFCON, and the
- * useCrisisLoop orchestration hook all subscribe to.
- */
-
 import { create } from "zustand";
 
 export type CrisisStatus = "IDLE" | "ANALYZING" | "CRISIS_ACTIVE";
 
 export interface ThreatData {
-  type: string;          // e.g. "Fire", "Weapon", "Smoke"
-  location: string;      // e.g. "Main Hall"
-  confidence: number;    // 0..1
+  type: string;
+  location: string;
+  confidence: number;
   rawLabels?: string[];
 }
 
 export interface ActionLogEntry {
-  timestamp: string;     // ISO 8601 string for stable serialization
+  timestamp: string;
   message: string;
-  node?: string;         // optional node id (e.g. "NODE-001")
+  node?: string;
   severity?: "CRITICAL" | "HIGH" | "WARNING" | "INFO";
+}
+
+export interface MeshCrisis {
+  event_id: string;
+  source_node_id: string;
+  threat_type: string;
+  confidence: number;
+  evacuation_message: string;
+  rescue_notes: string;
+  dispatched_at: number;
 }
 
 export interface CrisisState {
@@ -30,15 +33,18 @@ export interface CrisisState {
   threatData: ThreatData | null;
   actionLog: ActionLogEntry[];
   activeNode: string;
+  selectedNodeId: string;
+  crisis: MeshCrisis | null;
   evacuationMessage: string | null;
   audioBase64: string | null;
 
-  // Actions
   setStatus: (s: CrisisStatus) => void;
   setThreat: (t: ThreatData | null) => void;
   addToLog: (entry: Omit<ActionLogEntry, "timestamp"> & { timestamp?: string }) => void;
   setEvacuationMessage: (m: string | null) => void;
   setAudio: (b64: string | null) => void;
+  setSelectedNode: (id: string) => void;
+  applyMeshCrisis: (crisis: MeshCrisis | null) => void;
   resetCrisis: () => void;
 }
 
@@ -47,6 +53,8 @@ export const useCrisisStore = create<CrisisState>((set) => ({
   threatData: null,
   actionLog: [],
   activeNode: "NODE-001 (Main Hall)",
+  selectedNodeId: "NODE-001",
+  crisis: null,
   evacuationMessage: null,
   audioBase64: null,
 
@@ -62,24 +70,42 @@ export const useCrisisStore = create<CrisisState>((set) => ({
           severity: entry.severity ?? "INFO",
         },
         ...state.actionLog,
-      ].slice(0, 200), // cap to last 200 events
+      ].slice(0, 200),
     })),
   setEvacuationMessage: (m) => set({ evacuationMessage: m }),
   setAudio: (b64) => set({ audioBase64: b64 }),
+  setSelectedNode: (id) => set({ selectedNodeId: id }),
+  applyMeshCrisis: (crisis) =>
+    set(() => {
+      if (!crisis) {
+        return {
+          crisis: null,
+          status: "IDLE" as const,
+          threatData: null,
+          evacuationMessage: null,
+        };
+      }
+      return {
+        crisis,
+        status: "CRISIS_ACTIVE" as const,
+        threatData: {
+          type: crisis.threat_type,
+          location: crisis.source_node_id,
+          confidence: crisis.confidence,
+        },
+        evacuationMessage: crisis.evacuation_message,
+      };
+    }),
   resetCrisis: () =>
     set({
       status: "IDLE",
       threatData: null,
+      crisis: null,
       evacuationMessage: null,
       audioBase64: null,
     }),
 }));
 
-/**
- * The 4-node mesh per PRD §9 demo workflow.
- * Node 1 is the Detection node (laptop webcam).
- * Node 3 is the designated safe sector / North Exit.
- */
 export const MESH_NODES = [
   { id: "NODE-001", label: "Main Hall", role: "DETECTION" as const },
   { id: "NODE-002", label: "Adjacent Hallway", role: "ACTION" as const },

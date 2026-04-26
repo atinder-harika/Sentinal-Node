@@ -1,200 +1,111 @@
 # **🏆 Sentinel Node: Phase 2 Product Requirements Document (PRD)**
 
+*Updated: Live Production State*
+
 ## **1\. Project Overview**
 
-**Sentinel Node** is a Smart Emergency & Disaster Evacuation System. It transforms standard CCTVs into an intelligent, decentralized mesh network. When a crisis (fire, weapon, injury) occurs, the system detects the threat, logs it immutably, calculates the safest evacuation route using an LLM, and broadcasts hyper-realistic audio directions to affected zones.
+**Sentinel Node** is a Smart Emergency & Disaster Evacuation System. It transforms standard cameras into an intelligent, decentralized mesh network. When a crisis (e.g., active shooter) occurs, the system detects the threat, logs it immutably, calculates the safest evacuation route using an LLM, and broadcasts hyper-realistic audio directions to affected zones.
 
-For the Hackathon Demo, we are executing a **Two-Node Physical Mesh Simulation** to prove end-to-end (E2E) latency and hardware integration.
+**🚨 HACKATHON PIVOT (WHERE WE ARE RIGHT NOW):**
 
-## **2\. The Two-Node Architecture & Workflow**
+Due to severe hardware/networking blockers (Windows ICS DHCP hijacking via VMware, WPA3 Headless isolation, and missing micro-HDMI cables), **we have entirely scrapped the Raspberry Pi physical hardware.** Instead, we successfully executed a **Hardware-Agnostic Edge Node Pivot**. We are using twin laptops running a decoupled Python script (node.py) to simulate physical IoT nodes. Furthermore, Vultr hosting was abandoned due to a 48-hour verification delay, and we are now successfully deployed live on **Railway**.
 
-### **🟢 Node 1: The "Detection" Node (Laptop)**
+## **2\. The Two-Node Architecture & Workflow (Updated)**
 
-* **Hardware:** Laptop Web Camera.  
-* **Role:** Simulates a compromised sector.  
-* **Action:** Captures live footage. If a disaster (e.g., printed picture of a gun or fire) is held up to the camera, the local script POSTs the frame to the Vultr Cloud Server.
+### **🟢 The Edge Nodes: Laptop 1 & Laptop 2 (Python)**
 
-### **🧠 The Brain: Centralized Cloud Orchestration (Vultr Server)**
+* **Hardware:** Twin Laptops (acting as NODE-001 and NODE-002).  
+* **Software:** A standalone Python script (node.py) running OpenCV (cv2), requests, and pygame.  
+* **Role:** Completely decoupled from the browser to avoid Windows 11 Virtual Camera hijacking.  
+* **Action:** \* *Vision Thread:* Captures a frame every 3 seconds, encodes to base64, and POSTs to the Railway Server.  
+  * *Audio Thread:* Polls the Railway server every 2 seconds. If it receives a threat alert and an audio buffer targeted at its specific Node ID, it plays the evacuation alarm locally.
 
-The Vultr backend orchestrates the Crisis Loop. All external APIs (Vision, Gemma, ElevenLabs) have their own isolated Next.js API routes to prevent serverless timeouts and enforce modularity:
+### **🧠 The Brain: Centralized Cloud Orchestration (Railway \+ Snowflake)**
 
-* **Vision:** Passes the Node 1 frame to Google Cloud Vision API. Evaluates confidence thresholds for threat labels.  
-* **Log:** If threat \> 80% confidence, INSERT into Snowflake THREAT\_ALERTS table.  
-* **Triage:** Pings Gemma 4 with prompt: "Calculate evacuation route. Threat is at Node 1."  
+The Next.js backend (live at sentinal-node-production.up.railway.app) orchestrates the Crisis Loop.
+
+* **Vision (PIVOTED):** Google Cloud Vision LABEL\_DETECTION failed to identify a tactical shooter. We pivoted to **Gemini 1.5 Flash**, which accurately processes the tactical context.  
+* **State / Log:** Uses **Snowflake** (CRISIS\_EVENTS table) as the central brain. If Gemini detects a threat, it INSERTs it here.  
+* **Triage:** Pings Gemma with the prompt: "Calculate evacuation route. Threat is at Node X."  
 * **Voice:** Passes Gemma's routing instructions to ElevenLabs API to generate an MP3 buffer.  
-* **Dispatch:** Pushes the actionable payload (Threat Status \+ Audio Buffer) down to Node 2 via the Ethernet network.
+* **Dispatch:** Saves the ElevenLabs audio buffer to the Snowflake row, waiting for the target Node's Python script to poll and fetch it.
 
-### **🔴 Node 2: The "Action/Hardware" Node (Raspberry Pi 4\)**
+## **3\. Hardware Bill of Materials (The Scrapped & The New)**
 
-* **Hardware:** Raspberry Pi 4B, Ethernet connection, Breadboard, LEDs, Buzzer, Speaker (3.5mm/Bluetooth), HC-SR04 Ultrasonic Sensor.  
-* **Role:** Simulates an adjacent safe sector guiding civilians.  
-* **Action:** \* Receives the threat payload from the Vultr server.  
-  * Flashes Red/Green LEDs (visual guidance).  
-  * Sounds the Piezo buzzer (attention alarm).  
-  * Plays the ElevenLabs evacuation MP3 over the connected speaker.  
-* **Fallback Routine (Lights Out):** If the environment goes dark, the HC-SR04 ultrasonic sensor acts as a motion detector. If a civilian walks past (distance suddenly drops), the Pi flashes LEDs to guide them and pings the server: "Movement at Node 2."
+\~\~**Scrapped Compute & Wiring:**\~\~
 
-## **3\. Hardware Bill of Materials (Complete Inventory)**
+* \~\~Raspberry Pi 4 Model B (4GB), Breadboard, LEDs, HC-SR04 Ultrasonic Sensor, Ethernet direct-connect.\~\~ *(Reason: Windows DHCP/VMware blockage & hackathon time constraints).*
 
-**Core Compute:**
+**Current Active Hardware:**
 
-* Raspberry Pi 4 Model B (4GB)  
-* Raspberry Pi Power Cable  
-* 8GB Micro SD Card (flashed with Raspberry Pi OS)  
-* MicroSD to USB Adapter (for laptop flashing)
-
-**Networking & Inputs:**
-
-* Ethernet Cable (Direct connection between laptop and Pi for zero-latency network sharing)  
-* Laptop Webcam (Acting as Node 1's eyes)  
-* HC-SR04 Ultrasonic Sensor
-
-**Circuitry & Wiring:**
-
-* Small Breadboard  
-* Male-to-Female (M/F) jumper cables  
-* Male-to-Male (M/M) jumper wires  
-* 2x 330Ω (or 220Ω) Resistors (for LEDs)  
-* 1x 1kΩ Resistor & 1x 2kΩ Resistor (for the Ultrasonic Sensor voltage divider)
-
-**Outputs / Indicators:**
-
-* 1x Red LED  
-* 1x Green LED  
-* 1x Piezo Buzzer  
-* 1x Wired Speaker or Headphones (or Bluetooth paired for ElevenLabs playback)
+* **Laptop 1 (Node 1):** Runs node.py, uses integrated webcam, POSTs frames.  
+* **Laptop 2 (Node 2):** Runs node.py, polls DB, uses built-in speakers for ElevenLabs audio.  
+* **Display Client:** Any browser opening the Railway URL to view the Command Dashboard.
 
 ## **4\. Frontend UI/UX Specifications**
 
-The frontend is a dark-mode, tactical Next.js dashboard used by First Responders. It uses Tailwind CSS and shadcn/ui.
+### **4.1 The Main Dashboard (/app/dashboard/page.tsx)**
 
-### **4.1 Global Layout (/app/dashboard/layout.tsx)**
-
-* **Sidebar (Left):** Logo: "SENTINEL COMMAND". Navigation links: Dashboard, Node Grid, Database Logs. User Profile at bottom (Auth0 user info).  
-* **Main Content Area:** Dark background (bg-slate-950), responsive grid layout.
-
-### **4.2 State Management (/store/useCrisisStore.ts)**
-
-Global state is managed via Zustand. Required schema:
-
-* status: "IDLE" | "ANALYZING" | "CRISIS\_ACTIVE"  
-* threatData: null | { type: string, location: string, confidence: number }  
-* actionLog: Array\<{ timestamp: string, message: string }\>  
-* activeNode: "NODE-001 (Main Hall)"  
-* **Actions:** setStatus(), setThreat(), addToLog(), resetCrisis()
-
-### **4.3 The Main Dashboard (/app/dashboard/page.tsx)**
-
-* **Panel 1: The Edge Node Feed (Top Left)**  
-  * Mocks the Raspberry Pi camera feed.  
-  * \<Webcam /\> component inside a rounded div with a glowing border (Green if IDLE, pulsing Red if CRISIS\_ACTIVE).  
-  * Controls: "Start Auto-Scan" (interval trigger) & "Manual Override Scan" (instant trigger).  
+* **Panel 1: The Edge Node Feeds (Top Left)**  
+  * \~\~\<Webcam /\> component.\~\~ *(Scrapped due to Windows Virtual Camera hijacking).*  
+  * **NEW:** Standard HTML \<img\> tags. The React frontend uses a useEffect to poll /api/node/frame every 2 seconds to fetch the base64 frames held in the Next.js server memory, rendering the live feeds without touching the browser's local camera.  
 * **Panel 2: Tactical Mesh Map (Right Side)**  
-  * Grid showing 4 Nodes. Node 1 is Main Hall.  
-  * When status \=== CRISIS\_ACTIVE, Node 1 turns bright red, and animated arrows point from Node 1 to a safe node.  
-* **Panel 3: Live Incident Log (Bottom Full Width)**  
-  * Shadcn Table component showing the real-time flow of orchestrated API calls based on actionLog Zustand store.
+  * Grid showing the Nodes. When CRISIS\_ACTIVE, the compromised node turns bright red, and LLM Rescue Notes are displayed.
 
 ## **5\. Software Architecture: The "Crisis Loop" Orchestration**
 
-To avoid backend API chaining and serverless timeouts, the React Client (useCrisisLoop.ts hook) manages the orchestration and data flow. Every fetch call must be wrapped in try/catch.
+The flow is now driven by backend server-state, not the React client.
 
-1. **Trigger:** User clicks "Analyze Frame".  
-2. **Vision Check:** Send base64 frame to /api/vision.  
-3. **Evaluation:** Parse response. If threat\_detected \=== true, proceed.  
-4. **Initial Log:** Send threat data to /api/snowflake/log.  
-5. **AI Routing:** Send threat data to /api/gemma.  
-6. **Audio Gen:** Send Gemma's response text to /api/audio.  
-7. **Action Log:** Log the final AI decision to /api/snowflake/log.  
-8. **Broadcast:** Play audio buffer via native browser Audio API.
+1. **Capture:** Python script (node.py) POSTs frame to Railway /api/node/frame.  
+2. **Vision Check:** Next.js passes frame to Gemini 1.5 Flash.  
+3. **State Update:** If threat detected, Next.js POSTs to Snowflake (/api/events/push).  
+4. **AI Routing:** Next.js pings Gemma for escape routes.  
+5. **Audio Gen:** Next.js pings ElevenLabs, gets audio buffer, saves to Snowflake.  
+6. **Execution:** Node 2's Python script polls /api/events/sync, sees the audio buffer, downloads it, and plays it via pygame.
 
-**🛑 Error Handling & Fallbacks (Critical):**
+## **6\. API Credits & Deployment Strategy (Updated)**
 
-* **Vision Failure:** Abort loop. Show Shadcn Toast: "Vision API Timeout."  
-* **Gemma Failure:** DO NOT crash. Use hardcoded fallback: "Emergency detected. Please evacuate the area immediately."  
-* **Audio Failure:** Trigger browser's native window.speechSynthesis.speak() as a fallback voice.
-
-## **6\. BearHacks 2026: Free API Credits Strategy**
-
-* **Google Cloud Vision API:** First 1,000 requests free.  
-* **Google Gemma 4 (AI Studio):** Free tier (15 RPM / 1M Tokens/day).  
-* **Snowflake:** MLH Track 120-day student trial (No CC required).  
-* **ElevenLabs:** Free tier (10k chars/month). Use MLH promo code for Creator tier.  
-* **Vultr:** Use MLH hackathon credits ($50-$250). Destroy instance on Sunday.  
-* **Auth0:** Permanently free for \<7,500 users.
-
-*Golden Rule:* Never commit .env files to GitHub. Add to .gitignore immediately.
+* **Vision:** Gemini 1.5 Flash (via AI Studio Free Tier).  
+* **Routing:** Google Gemma (AI Studio Free Tier).  
+* **Database:** Snowflake (120-day student trial).  
+* **Voice:** ElevenLabs (Free Tier).  
+* **Hosting:** **Railway** (Custom node:20-alpine Dockerfile bypassing pnpm lockfile crashes).
 
 ## **7\. Backend API Routes & Schemas**
 
-**7.1 Google Cloud Vision (/api/vision)**
+* **NEW:** POST /api/node/frame \-\> Accepts { node\_id, image\_base64 }. Stores in memory global.nodeFrames and triggers Gemini.  
+* **NEW:** GET /api/node/frame \-\> Frontend polls this to display live feeds.  
+* POST /api/events/push \-\> Writes threat to Snowflake.  
+* GET /api/events/sync \-\> Python nodes poll this to receive audio instructions.
 
-* Method: POST  
-* Payload In: { "image\_base64": "data:image/jpeg;base64,..." }  
-* Payload Out:  
-  {  
-    "success": true,  
-    "threat\_detected": true,  
-    "threat\_type": "Fire",  
-    "confidence": 0.98,  
-    "raw\_labels": \["Fire", "Heat", "Building"\]  
-  }
+## **8\. Priority & Scope Matrix (CURRENT FOCUS)**
 
-**7.2 Gemma 4 AI (/api/gemma)**
-
-* Method: POST  
-* Payload In: { "threat\_type": "Fire", "location": "Main Hall" }  
-* Payload Out:  
-  {  
-    "success": true,  
-    "evacuation\_message": "Fire detected in Main Hall. Proceed calmly to the North Exit stairwell immediately."  
-  }
-
-**7.3 ElevenLabs Audio (/api/audio)**
-
-* Method: POST  
-* Payload In: { "text": "Fire detected in Main Hall..." }  
-* Payload Out: Raw audio buffer or base64 encoded audio string.
-
-**7.4 Snowflake DB (/api/snowflake/log & /api/snowflake/history)**
-
-* Log Payload In: { "node\_id": "NODE-001", "event\_type": "THREAT\_DETECTED", "details": "Fire 98%" }  
-* Log Payload Out: { "success": true }  
-* History Payload Out: { "success": true, "data": \[...\] }
-
-## **8\. Priority & Scope Reduction Matrix**
-
-| Priority | Feature | Status / Fallback Plan |
+| Priority | Feature | Status / Action Plan |
 | :---- | :---- | :---- |
-| **P0 (Must Have)** | UI Dashboard & Mock APIs | **Active.** Frontend is 95% complete. Use setTimeout and hardcoded JSON to ensure UI works even if Vultr crashes. |
-| **P0 (Must Have)** | E2E Node 1 to Node 2 Flow | **Active.** Laptop Cam \-\> Server \-\> Pi LEDs & Audio. (The core "wow" factor). |
-| **P1 (High Value)** | Live Snowflake Logging | **Active.** Write to DB and fetch for UI Incident Log. |
-| **P2 (Fakable)** | Network/SSH Issues | **Fallback:** Run Node 2 Python script locally on laptop and pretend laptop is the Pi. |
-| **P3 (Drop)** | Inter-Node WebSockets | **Dropped.** Server handles all routing. Nodes do not talk to each other directly. |
+| **P0** | Railway Deployment | **✅ DONE.** App is live on production URL. |
+| **P0** | Python Edge Nodes | **✅ DONE.** node.py successfully decoupled camera/audio. |
+| **P1** | Interactive Demo APIs | **🛠️ IN PROGRESS.** Converting old sandbox pages into isolated tools to prove Vision, Audio, and DB work independently for the judges. |
+| **P1** | Solana Audit Log | **PENDING (Focus).** Add @solana/web3.js to log threat hashes immutably to the devnet. |
+| **P2** | Auth0 Integration | **PENDING (Focus).** Lock down the Next.js /dashboard route. |
+| **P3** | Two-Way Audio | **PENDING (Flex).** Add Web Speech API / Python SpeechRecognition so civilians can talk back to the cameras. |
 
-## **9\. End-to-End Demo Workflow (The Presentation)**
+## **9\. End-to-End Demo Workflow (How we pitch to Judges)**
 
-**Phase 1: System Nominal (The Baseline)**
+**Phase 1: The Setup**
 
-* Dashboard open, showing DEFCON 5\. Node 1 feed is live. Node 2 (Pi) is connected, Green LED illuminated.
+* Open the Railway Dashboard on a monitor. Explain that the laptops running terminal scripts represent physical IoT cameras (Raspberry Pis).
 
-**Phase 2: The Incident (Triggering the Loop)**
+**Phase 2: The Independent API Demo (Sandbox)**
 
-* Hold up a printed picture of a weapon or fire to laptop webcam.
+* Use the Sandbox pages to show the judges the raw Google Vision JSON, the raw Gemma output, and the Snowflake data injection to prove it's not "smoke and mirrors."
 
-**Phase 3: The Dashboard Reaction (Software E2E)**
+**Phase 3: The Incident**
 
-* Status shifts to CRISIS\_ACTIVE (Red/Tactical UI).  
-* Map updates with animated routing arrows.  
-* Incident Log auto-populates NODE 1 \- FIRE\_DETECTED \- CRITICAL.
+* Hold the picture of the tactical shooter up to Laptop 1's webcam.
 
-**Phase 4: The Hardware Reaction (Physical E2E)**
+**Phase 4: The Mesh Reaction**
 
-* Server pings Gemma, sends to ElevenLabs, pushes payload down Ethernet to Pi.  
-* Green LED shuts off. Red LED flashes violently. Buzzer sounds alarm.  
-* Speaker plays ElevenLabs audio: *"Attention. Threat detected in Sector 1\. Proceed immediately to the North Exit."*
+* Laptop 1's terminal says Threat Detected. POSTing to Server.  
+* The Railway Dashboard turns Red, highlighting Node 1, displaying Gemma's dynamic escape route.  
+* Laptop 2's terminal says Emergency Instruction Received. and blasts the ElevenLabs audio alarm: *"Attention. Armed threat detected in Sector 1\. Proceed immediately to the North Exit."*
 
-**Phase 5: The "Lights Out" Bonus (Optional Flex)**
-
-* Cover laptop webcam. Run hand in front of Pi's HC-SR04 Ultrasonic Sensor.  
-* Pi detects proximity change, flashes LEDs in runway pattern, logs movement back to server.

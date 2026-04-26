@@ -1,20 +1,33 @@
 "use client";
 
-/**
- * NodeGrid — PRD §4.3 Panel 2 ("Tactical Mesh Map")
- *
- * Four-node mesh from MESH_NODES. When status === CRISIS_ACTIVE:
- *   - Node 1 (Detection / Main Hall) flashes red
- *   - An animated arrow draws from Node 1 to Node 3 (North Exit / Safe)
- */
-
 import { cn } from "@/lib/utils";
 import { BentoCard } from "./bento-card";
-import { useCrisisStore, MESH_NODES } from "@/store/useCrisisStore";
+import {
+  useCrisisStore,
+  MESH_NODES,
+  type MeshNode,
+} from "@/store/useCrisisStore";
+
+const NODE_POSITIONS: Record<string, { x: number; y: number }> = {
+  "NODE-001": { x: 25, y: 30 },
+  "NODE-002": { x: 75, y: 30 },
+  "NODE-003": { x: 25, y: 70 },
+  "NODE-004": { x: 75, y: 70 },
+};
 
 export function NodeGrid() {
   const status = useCrisisStore((s) => s.status);
+  const crisis = useCrisisStore((s) => s.crisis);
+  const selectedNodeId = useCrisisStore((s) => s.selectedNodeId);
+  const setSelectedNode = useCrisisStore((s) => s.setSelectedNode);
+
   const isCrisis = status === "CRISIS_ACTIVE";
+  const sourceNodeId = crisis?.source_node_id ?? null;
+  const eventId = crisis?.event_id ?? null;
+  const safeNode = MESH_NODES.find((n) => n.role === "SAFE");
+
+  const arrowFrom = sourceNodeId ? NODE_POSITIONS[sourceNodeId] : null;
+  const arrowTo = safeNode ? NODE_POSITIONS[safeNode.id] : null;
 
   return (
     <BentoCard className="lg:col-span-2 lg:row-span-2" delay={0}>
@@ -45,15 +58,12 @@ export function NodeGrid() {
         <div
           className="absolute inset-0 pointer-events-none opacity-20"
           style={{
-            backgroundImage: `
-              linear-gradient(to right, rgba(255,255,255,.1) 1px, transparent 1px),
-              linear-gradient(to bottom, rgba(255,255,255,.1) 1px, transparent 1px)
-            `,
+            backgroundImage:
+              "linear-gradient(to right, rgba(255,255,255,.1) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,.1) 1px, transparent 1px)",
             backgroundSize: "24px 24px",
           }}
         />
 
-        {/* SVG arrow layer (renders only on crisis) */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none"
           viewBox="0 0 100 100"
@@ -72,55 +82,71 @@ export function NodeGrid() {
               <path d="M0,0 L10,5 L0,10 Z" fill="rgb(16,185,129)" />
             </marker>
           </defs>
-          {isCrisis && (
+          {isCrisis && arrowFrom && arrowTo && (
             <line
-              x1="25"
-              y1="30"
-              x2="75"
-              y2="70"
+              key={eventId ?? "arrow"}
+              x1={arrowFrom.x}
+              y1={arrowFrom.y}
+              x2={arrowTo.x}
+              y2={arrowTo.y}
               stroke="rgb(16,185,129)"
               strokeWidth="0.6"
               strokeDasharray="2 2"
               markerEnd="url(#evac-arrow)"
-              style={{
-                animation: "evac-flow 1.4s linear infinite",
-              }}
+              style={{ animation: "evac-flow 1.4s linear infinite" }}
             />
           )}
         </svg>
 
-        {/* 2x2 node layout */}
         <div className="relative z-10 grid grid-cols-2 gap-6 h-full">
-          {MESH_NODES.map((node) => {
-            const isDetection = node.role === "DETECTION";
+          {MESH_NODES.map((node: MeshNode) => {
             const isSafe = node.role === "SAFE";
-            const showThreat = isCrisis && isDetection;
+            const isSource = isCrisis && sourceNodeId === node.id;
             const showSafe = isCrisis && isSafe;
+            const isSelected = selectedNodeId === node.id;
+
+            // Re-mount the source node per event_id so the keyframe animations
+            // restart fresh on every new dispatch (otherwise a back-to-back
+            // crisis on the same node looks frozen).
+            const buttonKey = isSource && eventId ? node.id + "::" + eventId : node.id;
 
             return (
-              <div
-                key={node.id}
+              <button
+                key={buttonKey}
+                type="button"
+                onClick={() => setSelectedNode(node.id)}
+                aria-pressed={isSelected}
+                aria-label={"Select " + node.id + " (" + node.label + ")"}
                 className={cn(
-                  "relative flex flex-col items-center justify-center rounded-lg border p-4 transition-all min-h-[120px]",
-                  showThreat
+                  "relative flex flex-col items-center justify-center rounded-lg border p-4 transition-all min-h-[120px] text-left cursor-pointer outline-none",
+                  isSource
                     ? "threat-pulse bg-red-500/10 border-red-500/60"
                     : showSafe
-                    ? "bg-emerald-500/15 border-emerald-500/60 shadow-[0_0_24px_rgba(16,185,129,.35)]"
-                    : node.role === "STANDBY"
-                    ? "bg-amber-500/5 border-amber-500/20"
-                    : "bg-white/[.06] backdrop-blur-md border-white/10 hover:border-emerald-500/30 hover:bg-emerald-500/10"
+                      ? "bg-emerald-500/15 border-emerald-500/60 shadow-[0_0_24px_rgba(16,185,129,.35)]"
+                      : node.role === "STANDBY"
+                        ? "bg-amber-500/5 border-amber-500/20 hover:border-amber-400/40"
+                        : "bg-white/[.06] backdrop-blur-md border-white/10 hover:border-emerald-500/30 hover:bg-emerald-500/10",
+                  isSelected &&
+                    !isSource &&
+                    !showSafe &&
+                    "ring-2 ring-cyan-400/50 ring-offset-0"
                 )}
               >
+                {isSelected && (
+                  <span className="absolute top-2 right-2 font-mono text-[8px] tracking-[0.28em] uppercase text-cyan-300/90 bg-cyan-500/15 border border-cyan-400/40 rounded px-1.5 py-0.5">
+                    Viewing
+                  </span>
+                )}
                 <span
                   className={cn(
                     "font-mono text-[22px] font-bold leading-none",
-                    showThreat
+                    isSource
                       ? "text-red-400"
                       : showSafe
-                      ? "text-emerald-300"
-                      : node.role === "STANDBY"
-                      ? "text-amber-400/60"
-                      : "text-white/80"
+                        ? "text-emerald-300"
+                        : node.role === "STANDBY"
+                          ? "text-amber-400/60"
+                          : "text-white/80"
                   )}
                 >
                   {node.id.replace("NODE-", "")}
@@ -128,11 +154,11 @@ export function NodeGrid() {
                 <span
                   className={cn(
                     "mt-1 font-mono text-[9px] tracking-[0.2em] uppercase",
-                    showThreat
+                    isSource
                       ? "text-red-400/80"
                       : showSafe
-                      ? "text-emerald-300/80"
-                      : "text-white/50"
+                        ? "text-emerald-300/80"
+                        : "text-white/50"
                   )}
                 >
                   {node.label}
@@ -142,41 +168,41 @@ export function NodeGrid() {
                   <span
                     className={cn(
                       "w-1.5 h-1.5 rounded-full",
-                      showThreat
+                      isSource
                         ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,.8)] blink"
                         : showSafe
-                        ? "bg-emerald-300 shadow-[0_0_8px_rgba(16,185,129,.9)]"
-                        : node.role === "STANDBY"
-                        ? "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,.6)]"
-                        : "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,.8)]"
+                          ? "bg-emerald-300 shadow-[0_0_8px_rgba(16,185,129,.9)]"
+                          : node.role === "STANDBY"
+                            ? "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,.6)]"
+                            : "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,.8)]"
                     )}
                   />
                   <span
                     className={cn(
                       "font-mono text-[8px] tracking-[0.2em] uppercase",
-                      showThreat
+                      isSource
                         ? "text-red-400"
                         : showSafe
-                        ? "text-emerald-300"
-                        : node.role === "STANDBY"
-                        ? "text-amber-400/60"
-                        : "text-white/40"
+                          ? "text-emerald-300"
+                          : node.role === "STANDBY"
+                            ? "text-amber-400/60"
+                            : "text-white/40"
                     )}
                   >
-                    {showThreat
+                    {isSource
                       ? "ALERT"
                       : showSafe
-                      ? "EVAC ROUTE"
-                      : node.role === "STANDBY"
-                      ? "STBY"
-                      : "OK"}
+                        ? "EVAC ROUTE"
+                        : node.role === "STANDBY"
+                          ? "STBY"
+                          : "OK"}
                   </span>
                 </div>
 
-                {showThreat && (
-                  <div className="absolute inset-0 rounded-lg bg-red-500/10 animate-pulse" />
+                {isSource && (
+                  <div className="absolute inset-0 rounded-lg bg-red-500/10 animate-pulse pointer-events-none" />
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
@@ -193,6 +219,10 @@ export function NodeGrid() {
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-red-500" />
             Threat
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-cyan-400" />
+            Viewing
           </span>
         </div>
       </div>
