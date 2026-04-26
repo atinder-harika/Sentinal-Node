@@ -1,24 +1,28 @@
-# Use Node 20 Alpine for a lightweight, fast build
+# Use Node 20 Alpine
 FROM node:20-alpine
 
-# Set the working directory inside the container
+# INSTALL NATIVE BUILD TOOLS (Required for Snowflake SDK and other heavy packages)
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /app
 
-# Copy package.json and package-lock.json (if available)
-COPY package*.json ./
+# Enable pnpm (since your local environment uses it)
+RUN corepack enable pnpm
 
-# Install dependencies. 
-# We explicitly use npm install to bypass the strict pnpm frozen-lockfile error you were hitting.
-RUN npm install
+# Copy package.json and the pnpm lockfile (if it exists)
+COPY package.json pnpm-lock.yaml* ./
+
+# Install dependencies using pnpm, bypassing the strict frozen lockfile check
+RUN pnpm install --no-frozen-lockfile
 
 # Copy the rest of your Next.js project code
 COPY . .
 
-# Build the Next.js application for production
-RUN npm run build
+# Build the Next.js application
+RUN pnpm run build
 
-# Expose port 3000 (Railway will automatically map this)
+# Expose port 3000
 EXPOSE 3000
 
 # Start the Next.js production server
-CMD ["npm", "start"]
+CMD ["pnpm", "start"]
