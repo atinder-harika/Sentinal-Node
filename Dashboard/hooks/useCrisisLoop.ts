@@ -1,72 +1,37 @@
 "use client";
 
-/**
- * useCrisisLoop — PRD §5
- *
- * Client-side orchestration for the Sentinel "Crisis Loop":
- *   capture frame → /api/vision → /api/snowflake/log → /api/gemma →
- *   /api/audio → /api/snowflake/log → /api/dispatch → playback.
- *
- * Every fetch is wrapped in try/catch with the fallbacks specified in
- * PRD §5: Vision Failure aborts + toasts; Gemma Failure uses a hardcoded
- * directive; Audio Failure triggers window.speechSynthesis.
- */
-
 import { useCallback, useEffect, useRef } from "react";
-import { toast } from "sonner";
 import { useCrisisStore } from "@/store/useCrisisStore";
 
 interface VisionResult {
   success: boolean;
   threat_detected: boolean;
-  threat_type: string | null;
+  threat_type: string;
   confidence: number;
-  raw_labels: string[];
-  source: string;
-  error?: string;
 }
 
 interface GemmaResult {
   success: boolean;
   evacuation_message: string;
-  source: string;
-  error?: string;
 }
 
-interface AudioResult {
-  success: boolean;
-  audio_base64?: string;
-  mime?: string;
-  source: string;
-  error?: string;
-}
-
-const FALLBACK_DIRECTIVE =
-  "Emergency detected. Please evacuate the area immediately and proceed to the North Exit stairwell.";
+const NODE_LOCATION = "NODE-001";
+const SAFE_ZONES = ["North Exit Stairwell"];
+const FALLBACK_VOICE_MESSAGE = "Emergency detected. Please evacuate.";
 
 export function useCrisisLoop(opts?: {
-  /** Captures the current webcam frame as a base64 data URL. Required to actually run. */
   captureFrame?: () => string | null;
-  /** Active node id; defaults to NODE-001. */
   nodeId?: string;
-  /** Active node label; defaults to "Main Hall". */
-  location?: string;
 }) {
   const captureFrame = opts?.captureFrame;
   const nodeId = opts?.nodeId ?? "NODE-001";
-  const location = opts?.location ?? "Main Hall";
 
-  const setStatus = useCrisisStore((s) => s.setStatus);
-  const setThreat = useCrisisStore((s) => s.setThreat);
-  const addToLog = useCrisisStore((s) => s.addToLog);
-  const setEvacuationMessage = useCrisisStore((s) => s.setEvacuationMessage);
-  const setAudio = useCrisisStore((s) => s.setAudio);
+  const { status, setStatus, setThreat, addToLog, setEvacuationMessage, setAudio } =
+    useCrisisStore();
 
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
   const autoScanRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inFlightRef = useRef(false);
 
-  // ────────────── helpers ──────────────
   const log = useCallback(
     (
       message: string,
@@ -76,216 +41,158 @@ export function useCrisisLoop(opts?: {
     [addToLog, nodeId]
   );
 
-  const playAudio = useCallback(
-    async (b64?: string, mime = "audio/mpeg", text?: string) => {
+  const triggerNativeVoiceFallback = useCallback(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(FALLBACK_VOICE_MESSAGE));
+    }
+  }, []);
+
+  const analyzeFrame = useCallback(
+    async (base64Image: string, civilian_transcript?: string) => {
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+
       try {
-        if (b64) {
-          const url = `data:${mime};base64,${b64}`;
-          if (!audioElRef.current) audioElRef.current = new Audio();
-          audioElRef.current.src = url;
-          await audioElRef.current.play();
+        // Step A
+        setStatus("ANALYZING");
+        log("Analyzing frame with Vision", "INFO");
+
+        const visionResponse = await fetch("/api/vision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image_base64: base64Image }),
+        });
+
+        if (!visionResponse.ok) {
+          throw new Error(`Vision request failed: ${visionResponse.status}`);
+        }
+
+        const vision = (await visionResponse.json()) as VisionResult;
+        if (!vision.success) {
+          throw new Error("Vision API returned success=false");
+        }
+
+        if (!vision.threat_detected) {
+          setStatus("IDLE");
+          log("No threat detected in current frame", "INFO");
           return;
         }
-        throw new Error("no audio buffer");
-      } catch {
-        // Fallback: native speech synthesis
-        if (typeof window !== "undefined" && "speechSynthesis" in window && text) {
-          const utter = new SpeechSynthesisUtterance(text);
-          utter.rate = 1.05;
-          utter.pitch = 1;
-          window.speechSynthesis.cancel();
-          window.speechSynthesis.speak(utter);
+
+        // Step B
+        setThreat({
+          type: vision.threat_type,
+          location: NODE_LOCATION,
+          confidence: vision.confidence,
+        });
+        log(`Threat detected: ${vision.threat_type}`, "CRITICAL");
+
+        const gemmaResponse = await fetch("/api/gemma", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threat_type: vision.threat_type,
+            location: NODE_LOCATION,
+            safe_zones: SAFE_ZONES,
+            civilian_transcript,
+          }),
+        });
+
+        if (!gemmaResponse.ok) {
+          throw new Error(`Gemma request failed: ${gemmaResponse.status}`);
         }
+
+        const gemma = (await gemmaResponse.json()) as GemmaResult;
+        if (!gemma.success || !gemma.evacuation_message) {
+          throw new Error("Gemma API did not return a valid evacuation message");
+        }
+
+        setEvacuationMessage(gemma.evacuation_message);
+
+        // Step C
+        const audioResponse = await fetch("/api/audio", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: gemma.evacuation_message }),
+        });
+
+        if (!audioResponse.ok) {
+          throw new Error(`Audio request failed: ${audioResponse.status}`);
+        }
+
+        const audioBlob = await audioResponse.blob();
+
+        // Step D
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        audio.onended = () => URL.revokeObjectURL(audioUrl);
+        audio.onerror = () => URL.revokeObjectURL(audioUrl);
+        await audio.play();
+
+        setAudio(null);
+
+        // Step E
+        setStatus("CRISIS_ACTIVE");
+        log(`Evacuation broadcast sent: ${gemma.evacuation_message}`, "HIGH");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown crisis loop error";
+        log(`Crisis loop failure: ${message}`, "WARNING");
+        setStatus("IDLE");
+        triggerNativeVoiceFallback();
+      } finally {
+        inFlightRef.current = false;
       }
     },
-    []
+    [log, setAudio, setEvacuationMessage, setStatus, setThreat, triggerNativeVoiceFallback]
   );
 
-  // ────────────── single analyze pass ──────────────
   const analyzeOnce = useCallback(async () => {
-    if (inFlightRef.current) return;
     if (!captureFrame) {
-      toast.error("Webcam not ready");
+      log("Capture frame function unavailable", "WARNING");
       return;
     }
+
     const frame = captureFrame();
     if (!frame) {
-      toast.error("Failed to capture frame");
+      log("Failed to capture frame", "WARNING");
       return;
     }
 
-    inFlightRef.current = true;
-    setStatus("ANALYZING");
-    log("Frame captured — sending to Vision pipeline", "INFO");
+    await analyzeFrame(frame);
+  }, [analyzeFrame, captureFrame, log]);
 
-    // 1) Vision check
-    let vision: VisionResult;
-    try {
-      const res = await fetch("/api/vision", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_base64: frame }),
-      });
-      vision = (await res.json()) as VisionResult;
-      if (!vision.success) throw new Error(vision.error ?? "vision failure");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Vision API Timeout";
-      toast.error("Vision API Timeout", { description: msg });
-      log(`Vision pipeline failed: ${msg}`, "WARNING");
-      setStatus("IDLE");
-      inFlightRef.current = false;
-      return;
-    }
-
-    if (!vision.threat_detected) {
-      log(
-        `Frame clear — top labels: ${vision.raw_labels.slice(0, 3).join(", ") || "none"}`,
-        "INFO"
-      );
-      setStatus("IDLE");
-      inFlightRef.current = false;
-      return;
-    }
-
-    // 2) Threat confirmed → set state, log to Snowflake
-    const threat = {
-      type: vision.threat_type ?? "Unknown",
-      location,
-      confidence: vision.confidence,
-      rawLabels: vision.raw_labels,
-    };
-    setThreat(threat);
-    setStatus("CRISIS_ACTIVE");
-    const conf = `${Math.round(vision.confidence * 100)}%`;
-    log(`THREAT_DETECTED · ${threat.type} · ${conf}`, "CRITICAL");
-
-    fetch("/api/snowflake/log", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        node_id: nodeId,
-        event_type: "THREAT_DETECTED",
-        details: `${threat.type} ${conf}`,
-      }),
-    }).catch((e) => log(`Snowflake log failed: ${e?.message ?? e}`, "WARNING"));
-
-    // 3) Gemma triage
-    let directive = FALLBACK_DIRECTIVE;
-    try {
-      const res = await fetch("/api/gemma", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ threat_type: threat.type, location }),
-      });
-      const gemma = (await res.json()) as GemmaResult;
-      if (gemma?.evacuation_message) directive = gemma.evacuation_message;
-      log(`Gemma routing (${gemma.source}): "${directive}"`, "HIGH");
-    } catch (e) {
-      log(`Gemma fallback used: ${e instanceof Error ? e.message : e}`, "WARNING");
-    }
-    setEvacuationMessage(directive);
-
-    // 4) ElevenLabs audio
-    let audio: AudioResult | null = null;
-    try {
-      const res = await fetch("/api/audio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: directive }),
-      });
-      audio = (await res.json()) as AudioResult;
-      if (audio.success && audio.audio_base64) {
-        setAudio(audio.audio_base64);
-        log("ElevenLabs audio ready · broadcasting", "HIGH");
-      } else {
-        throw new Error(audio.error ?? "no audio");
-      }
-    } catch (e) {
-      log(
-        `Audio fallback to speechSynthesis: ${e instanceof Error ? e.message : e}`,
-        "WARNING"
-      );
-    }
-
-    // 5) Snowflake — final action log
-    fetch("/api/snowflake/log", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        node_id: nodeId,
-        event_type: "EVACUATION_DISPATCHED",
-        details: directive.slice(0, 240),
-      }),
-    }).catch(() => {});
-
-    // 6) Dispatch payload to Node 2 (Pi)
-    fetch("/api/dispatch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        threat_type: threat.type,
-        location,
-        evacuation_message: directive,
-        audio_base64: audio?.audio_base64,
-        node_id: "NODE-002",
-      }),
-    })
-      .then(async (r) => {
-        const j = await r.json();
-        log(
-          j.dispatched
-            ? "Node 2 dispatched · LEDs / buzzer / speaker armed"
-            : "Node 2 dispatch mocked (no NODE2_PUSH_URL)",
-          "HIGH",
-          "NODE-002"
-        );
-      })
-      .catch((e) => log(`Dispatch error: ${e?.message ?? e}`, "WARNING", "NODE-002"));
-
-    // 7) Browser broadcast
-    await playAudio(audio?.audio_base64, audio?.mime, directive);
-
-    inFlightRef.current = false;
-  }, [
-    captureFrame,
-    location,
-    log,
-    nodeId,
-    playAudio,
-    setAudio,
-    setEvacuationMessage,
-    setStatus,
-    setThreat,
-  ]);
-
-  // ────────────── auto-scan controls ──────────────
   const startAutoScan = useCallback(
     (intervalMs = 5000) => {
       if (autoScanRef.current) return;
+
       autoScanRef.current = setInterval(() => {
-        // Read the freshest status from the store rather than a stale closure.
-        if (useCrisisStore.getState().status !== "CRISIS_ACTIVE") analyzeOnce();
+        if (useCrisisStore.getState().status !== "CRISIS_ACTIVE") {
+          void analyzeOnce();
+        }
       }, intervalMs);
-      log(`Auto-scan engaged · ${intervalMs}ms interval`, "INFO");
+
+      log(`Auto scan started (${intervalMs}ms)`, "INFO");
     },
     [analyzeOnce, log]
   );
 
   const stopAutoScan = useCallback(() => {
-    if (autoScanRef.current) {
-      clearInterval(autoScanRef.current);
-      autoScanRef.current = null;
-      log("Auto-scan disengaged", "INFO");
-    }
+    if (!autoScanRef.current) return;
+    clearInterval(autoScanRef.current);
+    autoScanRef.current = null;
+    log("Auto scan stopped", "INFO");
   }, [log]);
 
   useEffect(() => {
     return () => {
-      if (autoScanRef.current) clearInterval(autoScanRef.current);
+      if (autoScanRef.current) {
+        clearInterval(autoScanRef.current);
+      }
     };
   }, []);
 
   return {
+    status,
+    analyzeFrame,
     analyzeOnce,
     startAutoScan,
     stopAutoScan,
