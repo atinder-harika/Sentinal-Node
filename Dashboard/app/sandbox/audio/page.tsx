@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Radio, Play, Pause, Volume2, Send, Mic } from "lucide-react";
 import { TopNav } from "@/components/sentinel/top-nav";
 
@@ -28,6 +28,17 @@ const QUICK_MESSAGES = [
   "Medical emergency. First responders en route.",
 ];
 
+const WAVE_BAR_HEIGHTS = [
+  "h-[24%]",
+  "h-[38%]",
+  "h-[52%]",
+  "h-[31%]",
+  "h-[47%]",
+  "h-[60%]",
+  "h-[27%]",
+  "h-[44%]",
+];
+
 export default function AudioPage() {
   const [message, setMessage] = useState("");
   const [selectedVoice, setSelectedVoice] = useState(VOICE_PRESETS[0].id);
@@ -37,21 +48,99 @@ export default function AudioPage() {
   const [generatedAudio, setGeneratedAudio] = useState(false);
   const [volume, setVolume] = useState(80);
   const [targetNodes, setTargetNodes] = useState<string[]>(["all"]);
+  const [audioSrc, setAudioSrc] = useState<string>("");
+  const [error, setError] = useState("");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previousObjectUrlRef = useRef<string | null>(null);
 
-  const handleGenerate = () => {
+  useEffect(() => {
+    if (!audioRef.current) return;
+    audioRef.current.volume = volume / 100;
+  }, [volume]);
+
+  useEffect(() => {
+    return () => {
+      if (previousObjectUrlRef.current) {
+        URL.revokeObjectURL(previousObjectUrlRef.current);
+      }
+    };
+  }, []);
+
+  const handleGenerate = async () => {
     if (!message.trim()) return;
+
+    setError("");
     setIsGenerating(true);
-    setTimeout(() => {
-      setIsGenerating(false);
+
+    try {
+      const response = await fetch("/api/audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: message.trim() }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Audio generation failed (${response.status})`);
+      }
+
+      let nextSrc = "";
+      const contentType = response.headers.get("content-type") ?? "";
+
+      if (contentType.includes("audio/")) {
+        const blob = await response.blob();
+        nextSrc = URL.createObjectURL(blob);
+        if (previousObjectUrlRef.current) {
+          URL.revokeObjectURL(previousObjectUrlRef.current);
+        }
+        previousObjectUrlRef.current = nextSrc;
+      } else {
+        const json = (await response.json()) as { audio_base64?: string; mime?: string };
+        if (!json.audio_base64) {
+          throw new Error("Audio response did not include playable audio data");
+        }
+        nextSrc = `data:${json.mime ?? "audio/mpeg"};base64,${json.audio_base64}`;
+      }
+
+      setAudioSrc(nextSrc);
       setGeneratedAudio(true);
-    }, 2000);
+      setIsPlaying(false);
+
+      setTimeout(async () => {
+        if (!audioRef.current) return;
+        try {
+          await audioRef.current.play();
+          setIsPlaying(true);
+        } catch {
+          setError("Autoplay was blocked. Press play to listen.");
+        }
+      }, 0);
+    } catch (err) {
+      const messageText = err instanceof Error ? err.message : "Unexpected audio generation error";
+      setError(messageText);
+      setGeneratedAudio(false);
+      setAudioSrc("");
+      setIsPlaying(false);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
-  const handleBroadcast = () => {
-    setIsPlaying(true);
-    setTimeout(() => {
+  const handleBroadcast = async () => {
+    if (!audioRef.current || !audioSrc) return;
+    setError("");
+
+    try {
+      if (isPlaying) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+      } else {
+        await audioRef.current.play();
+        setIsPlaying(true);
+      }
+    } catch {
+      setError("Playback failed. Try generating audio again.");
       setIsPlaying(false);
-    }, 3000);
+    }
   };
 
   return (
@@ -143,6 +232,8 @@ export default function AudioPage() {
                 <select
                   value={selectedVoice}
                   onChange={(e) => setSelectedVoice(e.target.value)}
+                  title="Voice Preset"
+                  aria-label="Voice Preset"
                   className="w-full bg-black/40 backdrop-blur-md border border-white/10 rounded-lg px-4 py-2.5 font-mono text-[12px] text-white focus:outline-none focus:border-red-500/50"
                 >
                   {VOICE_PRESETS.map((v) => (
@@ -159,6 +250,8 @@ export default function AudioPage() {
                 <select
                   value={selectedLang}
                   onChange={(e) => setSelectedLang(e.target.value)}
+                  title="Language"
+                  aria-label="Language"
                   className="w-full bg-black/40 backdrop-blur-md border border-white/10 rounded-lg px-4 py-2.5 font-mono text-[12px] text-white focus:outline-none focus:border-red-500/50"
                 >
                   {LANGUAGES.map((l) => (
@@ -179,10 +272,14 @@ export default function AudioPage() {
               <Mic className={`w-4 h-4 ${isGenerating ? "animate-pulse" : ""}`} />
               {isGenerating ? "Generating Audio..." : "Generate Voice"}
             </button>
+
+            {error ? (
+              <p className="mt-3 text-[12px] text-red-300 font-mono">{error}</p>
+            ) : null}
           </div>
 
           {/* Broadcast Controls */}
-          <div className="bento-card rounded-2xl p-6 bento-in" style={{ animationDelay: "90ms" }}>
+          <div className="bento-card rounded-2xl p-6 bento-in">
             <span className="corner tl" />
             <span className="corner tr" />
             <span className="corner bl" />
@@ -212,20 +309,24 @@ export default function AudioPage() {
                         : generatedAudio
                           ? "bg-white/30"
                           : "bg-white/10"
-                    }`}
-                    style={{
-                      height: `${20 + Math.random() * 40}%`,
-                      animationDelay: `${i * 0.05}s`,
-                    }}
+                    } ${WAVE_BAR_HEIGHTS[i % WAVE_BAR_HEIGHTS.length]}`}
                   />
                 ))}
               </div>
 
               {/* Playback controls */}
               <div className="flex items-center gap-3 mt-4">
+                <audio
+                  ref={audioRef}
+                  src={audioSrc}
+                  preload="auto"
+                  onEnded={() => setIsPlaying(false)}
+                  onPause={() => setIsPlaying(false)}
+                  onPlay={() => setIsPlaying(true)}
+                />
                 <button
                   onClick={handleBroadcast}
-                  disabled={!generatedAudio || isPlaying}
+                  disabled={!generatedAudio}
                   className="w-10 h-10 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-300 hover:bg-red-500/30 transition-all disabled:opacity-50"
                 >
                   {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
@@ -233,8 +334,7 @@ export default function AudioPage() {
                 <div className="flex-1">
                   <div className="h-1 bg-white/10 rounded-full overflow-hidden">
                     <div
-                      className={`h-full bg-red-500 transition-all ${isPlaying ? "animate-pulse" : ""}`}
-                      style={{ width: isPlaying ? "60%" : "0%" }}
+                      className={`h-full bg-red-500 transition-all ${isPlaying ? "animate-pulse w-3/5" : "w-0"}`}
                     />
                   </div>
                 </div>
@@ -258,6 +358,8 @@ export default function AudioPage() {
                   max="100"
                   value={volume}
                   onChange={(e) => setVolume(Number(e.target.value))}
+                  title="Volume"
+                  aria-label="Volume"
                   className="flex-1 h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-red-500"
                 />
               </div>
