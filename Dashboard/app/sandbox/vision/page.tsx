@@ -1,47 +1,117 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
-import { ArrowLeft, Camera, Eye, AlertTriangle, Check, RefreshCw } from "lucide-react";
+import { ChangeEvent, useMemo, useState } from "react";
+import { ArrowLeft, Camera, Eye, RefreshCw } from "lucide-react";
 import { TopNav } from "@/components/sentinel/top-nav";
 
-const MOCK_LABELS = [
-  { description: "Person", score: 0.97, topicality: 0.97 },
-  { description: "Crowd", score: 0.89, topicality: 0.89 },
-  { description: "Street", score: 0.85, topicality: 0.85 },
-  { description: "Urban area", score: 0.82, topicality: 0.78 },
-  { description: "Vehicle", score: 0.76, topicality: 0.72 },
-  { description: "Building", score: 0.71, topicality: 0.68 },
-];
+interface VisionResult {
+  success: boolean;
+  threat_detected: boolean;
+  threat_type?: string;
+  confidence: number;
+  boxes?: DetectionBox[];
+  detections?: DetectionBox[];
+  object_boxes?: DetectionBox[];
+  objects?: DetectionBox[];
+}
 
-const THREAT_KEYWORDS = ["fire", "smoke", "weapon", "flood", "explosion"];
-
-function LiveTimestamp() {
-  const [time, setTime] = useState(new Date().toISOString());
-  useEffect(() => {
-    const id = setInterval(() => setTime(new Date().toISOString()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return <span>{time}</span>;
+interface DetectionBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label?: string;
+  confidence?: number;
 }
 
 export default function VisionPage() {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [labels, setLabels] = useState(MOCK_LABELS);
-  const [frameCount, setFrameCount] = useState(1247);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [visionResult, setVisionResult] = useState<VisionResult | null>(null);
+  const [error, setError] = useState<string>("");
 
-  const runInference = () => {
+  const normalizedResult = useMemo(() => {
+    if (!visionResult) {
+      return null;
+    }
+
+    return {
+      threat_detected: visionResult.threat_detected,
+      type: visionResult.threat_type ?? "None",
+      confidence: visionResult.confidence,
+    };
+  }, [visionResult]);
+
+  const detectedBoxes = useMemo(() => {
+    if (!visionResult) {
+      return [] as DetectionBox[];
+    }
+
+    return (
+      visionResult.boxes ??
+      visionResult.detections ??
+      visionResult.object_boxes ??
+      visionResult.objects ??
+      []
+    );
+  }, [visionResult]);
+
+  const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setVisionResult(null);
+    setError("");
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : null;
+      setImageBase64(result);
+    };
+    reader.onerror = () => {
+      setError("Failed to read image file.");
+      setImageBase64(null);
+    };
+
+    reader.readAsDataURL(file);
+  };
+
+  const runVision = async () => {
+    if (!imageBase64) {
+      setError("Upload an image first.");
+      return;
+    }
+
     setIsProcessing(true);
-    setTimeout(() => {
-      setFrameCount((c) => c + 1);
-      setLabels(
-        MOCK_LABELS.map((l) => ({
-          ...l,
-          score: Math.min(0.99, l.score + (Math.random() - 0.5) * 0.1),
-        }))
-      );
+    setError("");
+
+    try {
+      const response = await fetch("/api/vision", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          image_base64: imageBase64,
+        }),
+      });
+
+      const data = (await response.json()) as VisionResult;
+      if (!response.ok || !data.success) {
+        throw new Error("Vision API request failed");
+      }
+
+      setVisionResult(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unexpected error";
+      setError(message);
+      setVisionResult(null);
+    } finally {
       setIsProcessing(false);
-    }, 800);
+    }
   };
 
   return (
@@ -71,7 +141,7 @@ export default function VisionPage() {
                 Vision · Edge Proxy
               </h1>
               <p className="text-[13px] text-white/50">
-                Mocked webcam feed → Cloud Vision JSON. Inspect labels the edge proxy emits.
+                Upload a test image, run Vision analysis, and inspect the returned threat JSON.
               </p>
             </div>
             <div className="ml-auto flex items-center gap-3">
@@ -97,67 +167,121 @@ export default function VisionPage() {
 
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-mono text-[10px] tracking-[0.28em] uppercase text-white/50">
-                Edge Camera Feed
+                Uploaded Image
               </h2>
               <div className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,.8)] blink" />
-                <span className="font-mono text-[10px] tracking-[0.2em] text-emerald-400">LIVE</span>
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${isProcessing ? "bg-amber-300" : "bg-emerald-400"}`}
+                />
+                <span className="font-mono text-[10px] tracking-[0.2em] text-white/70">
+                  {isProcessing ? "RUNNING" : "READY"}
+                </span>
               </div>
             </div>
 
-            {/* Mock video feed */}
             <div className="relative aspect-video bg-black/60 rounded-lg overflow-hidden border border-white/10">
-              <div className="absolute inset-0 bg-gradient-to-br from-zinc-800/50 to-zinc-900/80" />
-              
-              {/* Simulated camera overlay */}
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center">
-                  <Camera className="w-16 h-16 text-white/20 mx-auto mb-3" />
-                  <p className="font-mono text-[11px] text-white/30">SIMULATED FEED</p>
-                  <p className="font-mono text-[10px] text-white/20 mt-1">node-098 · sector-7G</p>
+              {imageBase64 ? (
+                <>
+                  <img
+                    src={imageBase64}
+                    alt="Uploaded for vision analysis"
+                    className="absolute inset-0 h-full w-full object-contain"
+                  />
+
+                  <svg
+                    className="absolute inset-0 h-full w-full"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    aria-label="Detection overlays"
+                  >
+                    {detectedBoxes.map((box, idx) => {
+                      const x = box.x * 100;
+                      const y = box.y * 100;
+                      const width = box.width * 100;
+                      const height = box.height * 100;
+                      const label = box.label ?? "object";
+                      const confidence =
+                        typeof box.confidence === "number"
+                          ? ` ${(box.confidence * 100).toFixed(0)}%`
+                          : "";
+
+                      return (
+                        <g key={`${idx}-${label}`}>
+                          <rect
+                            x={x}
+                            y={y}
+                            width={width}
+                            height={height}
+                            fill="transparent"
+                            stroke="#f87171"
+                            strokeWidth="0.5"
+                            rx="0.6"
+                          />
+                          <text
+                            x={x}
+                            y={Math.max(y - 1, 3)}
+                            fill="#fca5a5"
+                            fontSize="2.5"
+                            fontFamily="monospace"
+                          >
+                            {`${label}${confidence}`}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </>
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-center px-8">
+                  <div>
+                    <Camera className="w-14 h-14 text-white/20 mx-auto mb-2" />
+                    <p className="font-mono text-[11px] text-white/40 uppercase tracking-[0.2em]">
+                      No Image Selected
+                    </p>
+                  </div>
                 </div>
-              </div>
-
-              {/* HUD overlay */}
-              <div className="absolute top-3 left-3 font-mono text-[9px] text-emerald-400/80">
-                <div>REC · Frame {frameCount}</div>
-                <div className="text-white/40 mt-1"><LiveTimestamp /></div>
-              </div>
-
-              {/* Detection boxes (simulated) */}
-              <div className="absolute top-1/4 left-1/4 w-20 h-28 border border-emerald-400/60 rounded">
-                <span className="absolute -top-5 left-0 font-mono text-[8px] text-emerald-400 bg-black/60 px-1">
-                  PERSON 97%
-                </span>
-              </div>
-              <div className="absolute top-1/3 right-1/4 w-24 h-16 border border-blue-400/60 rounded">
-                <span className="absolute -top-5 left-0 font-mono text-[8px] text-blue-400 bg-black/60 px-1">
-                  VEHICLE 76%
-                </span>
-              </div>
-
-              {/* Scanline effect */}
-              <div className="scanline opacity-30" />
+              )}
             </div>
 
-            {/* Controls */}
-            <div className="mt-4 flex items-center gap-3">
+            <div className="mt-4 flex flex-col gap-3">
+              <label
+                htmlFor="vision-upload"
+                className="font-mono text-[10px] tracking-[0.2em] uppercase text-white/60"
+              >
+                Upload Image
+              </label>
+              <input
+                id="vision-upload"
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="block w-full rounded-lg border border-white/10 bg-black/40 text-white/70 file:mr-4 file:rounded-md file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-white/80 file:font-mono file:text-[10px] file:tracking-[0.18em] file:uppercase"
+              />
+
               <button
-                onClick={runInference}
+                onClick={runVision}
                 disabled={isProcessing}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-white/5 backdrop-blur-sm border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all font-mono text-[10px] tracking-[0.2em] uppercase text-white/70 disabled:opacity-50"
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-white/5 backdrop-blur-sm border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all font-mono text-[10px] tracking-[0.2em] uppercase text-white/70 disabled:opacity-50"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isProcessing ? "animate-spin" : ""}`} />
-                {isProcessing ? "Processing..." : "Run Inference"}
+                {isProcessing ? "Analyzing..." : "Send to /api/vision"}
               </button>
-              <div className="px-3 py-2.5 rounded-lg bg-black/40 backdrop-blur-md border border-white/5 font-mono text-[10px] text-white/50">
-                FPS: 24
-              </div>
+
+              {error ? (
+                <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-300">
+                  {error}
+                </div>
+              ) : null}
+
+              {imageBase64 && detectedBoxes.length === 0 ? (
+                <p className="text-[11px] text-white/45 font-mono">
+                  Box overlay appears only if the Vision API returns bounding coordinates.
+                </p>
+              ) : null}
             </div>
           </div>
 
-          {/* Cloud Vision JSON Panel */}
-          <div className="bento-card rounded-2xl p-6 bento-in" style={{ animationDelay: "90ms" }}>
+          <div className="bento-card rounded-2xl p-6 bento-in">
             <span className="corner tl" />
             <span className="corner tr" />
             <span className="corner bl" />
@@ -165,57 +289,25 @@ export default function VisionPage() {
 
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-mono text-[10px] tracking-[0.28em] uppercase text-white/50">
-                Cloud Vision Response
+                Vision JSON
               </h2>
               <Eye className="w-4 h-4 text-white/30" />
             </div>
 
-            {/* JSON output */}
             <div className="bg-black/40 backdrop-blur-md rounded-lg border border-white/5 p-4 font-mono text-[11px] max-h-[400px] overflow-auto">
-              <pre className="text-white/70">
-{`{
-  "responses": [{
-    "labelAnnotations": [
-${labels.map((l, i) => `      {
-        "description": "${l.description}",
-        "score": ${l.score.toFixed(4)},
-        "topicality": ${l.topicality.toFixed(4)}
-      }${i < labels.length - 1 ? "," : ""}`).join("\n")}
-    ],
-    "safeSearchAnnotation": {
-      "adult": "VERY_UNLIKELY",
-      "violence": "UNLIKELY"
-    }
-  }]
-}`}
+              <pre className="text-white/70 whitespace-pre-wrap break-words">
+{normalizedResult
+  ? JSON.stringify(normalizedResult, null, 2)
+  : JSON.stringify(
+      {
+        threat_detected: false,
+        type: "None",
+        confidence: 0,
+      },
+      null,
+      2
+    )}
               </pre>
-            </div>
-
-            {/* Labels as badges */}
-            <div className="mt-4">
-              <p className="font-mono text-[9px] tracking-[0.28em] uppercase text-white/40 mb-2">
-                Detected Labels
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {labels.map((l) => (
-                  <span
-                    key={l.description}
-                    className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full font-mono text-[10px] ${
-                      THREAT_KEYWORDS.some((k) => l.description.toLowerCase().includes(k))
-                        ? "bg-red-500/15 border border-red-500/40 text-red-400"
-                        : "bg-white/5 backdrop-blur-sm border border-white/10 text-white/60"
-                    }`}
-                  >
-                    {THREAT_KEYWORDS.some((k) => l.description.toLowerCase().includes(k)) ? (
-                      <AlertTriangle className="w-3 h-3" />
-                    ) : (
-                      <Check className="w-3 h-3" />
-                    )}
-                    {l.description}
-                    <span className="text-white/40">{(l.score * 100).toFixed(0)}%</span>
-                  </span>
-                ))}
-              </div>
             </div>
           </div>
         </div>
@@ -223,7 +315,7 @@ ${labels.map((l, i) => `      {
         {/* Footer */}
         <footer className="mt-12 pt-6 border-t border-white/5 flex items-center justify-between font-mono text-[9px] tracking-[0.28em] uppercase text-white/30">
           <span>Vision Edge Proxy v1.2.0 · Cloud Vision API v1</span>
-          <span>Latency: 142ms · Queue: 0</span>
+          <span>Upload · Analyze · Inspect JSON</span>
         </footer>
       </main>
     </div>

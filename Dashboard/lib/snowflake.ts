@@ -1,71 +1,114 @@
-/**
- * Snowflake helpers — single connection promise, table bootstrap, log + history.
- * Wrapped in try/catch by the API routes; this module only resolves a typed
- * client when env credentials are present.
- */
-import { env, wired } from "@/lib/sentinel-env";
+import type { Connection, RowStatement } from "snowflake-sdk";
 
 export interface ThreatLogRow {
   TIMESTAMP: string;
   NODE_ID: string;
   EVENT_TYPE: string;
-  DETAILS: string;
+  THREAT_DETAILS?: string;
+  DETAILS?: string;
+  IS_ACTIVE?: boolean;
 }
 
-let cachedConnPromise: Promise<unknown> | null = null;
+interface SnowflakeCredentials {
+  account: string;
+  username: string;
+  password: string;
+  role?: string;
+  warehouse?: string;
+}
 
-async function getConnection() {
-  if (!wired.snowflake) {
-    throw new Error("Snowflake credentials not configured");
+let cachedConnectionPromise: Promise<Connection> | null = null;
+
+function getCredentials(): SnowflakeCredentials {
+  const creds: SnowflakeCredentials = {
+    account: process.env.SNOWFLAKE_ACCOUNT ?? "",
+    username: process.env.SNOWFLAKE_USERNAME ?? "",
+    password: process.env.SNOWFLAKE_PASSWORD ?? "",
+    role: process.env.SNOWFLAKE_ROLE,
+    warehouse: process.env.SNOWFLAKE_WAREHOUSE,
+  };
+
+  if (!creds.account || !creds.username || !creds.password) {
+    throw new Error("Snowflake credentials are not configured");
   }
-  if (cachedConnPromise) return cachedConnPromise;
 
-  cachedConnPromise = (async () => {
+  return creds;
+}
+
+export async function getSnowflakeConnection(): Promise<Connection> {
+  if (cachedConnectionPromise) {
+    return cachedConnectionPromise;
+  }
+
+  cachedConnectionPromise = (async () => {
     const snowflake = (await import("snowflake-sdk")) as typeof import("snowflake-sdk");
-    const conn = snowflake.createConnection({
-      account: env.SNOWFLAKE_ACCOUNT,
-      username: env.SNOWFLAKE_USERNAME,
-      password: env.SNOWFLAKE_PASSWORD,
-      database: env.SNOWFLAKE_DATABASE,
-      schema: env.SNOWFLAKE_SCHEMA,
-      warehouse: env.SNOWFLAKE_WAREHOUSE,
-      ...(env.SNOWFLAKE_ROLE ? { role: env.SNOWFLAKE_ROLE } : {}),
+    const credentials = getCredentials();
+    const connection = snowflake.createConnection({
+      account: credentials.account,
+      username: credentials.username,
+      password: credentials.password,
+      ...(credentials.role ? { role: credentials.role } : {}),
+      ...(credentials.warehouse ? { warehouse: credentials.warehouse } : {}),
     });
 
     await new Promise<void>((resolve, reject) => {
-      conn.connect((err) => (err ? reject(err) : resolve()));
+      connection.connect((err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve();
+      });
     });
 
-    // Idempotent bootstrap of the alerts table.
-    await execSql(
-      conn,
-      `CREATE TABLE IF NOT EXISTS THREAT_ALERTS (
-         TIMESTAMP   TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-         NODE_ID     STRING,
-         EVENT_TYPE  STRING,
-         DETAILS     STRING
-       )`
-    );
-
-    return conn;
+    return connection;
   })();
 
-  return cachedConnPromise;
+  return cachedConnectionPromise;
 }
 
-function execSql<T = unknown>(conn: unknown, sql: string, binds: unknown[] = []) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const c = conn as any;
+export async function executeSnowflake<T = Record<string, unknown>>(
+  sqlText: string,
+  binds: unknown[] = []
+): Promise<T[]> {
+  const connection = await getSnowflakeConnection();
+
   return new Promise<T[]>((resolve, reject) => {
-    c.execute({
-      sqlText: sql,
+    connection.execute({
+      sqlText,
       binds,
-      complete: (err: Error | undefined, _stmt: unknown, rows: T[] | undefined) => {
-        if (err) reject(err);
-        else resolve(rows ?? []);
+      complete: (err: Error | undefined, _stmt: RowStatement, rows: T[] | undefined) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(rows ?? []);
       },
     });
   });
+}
+
+export async function insertCrisisEvent(input: {
+  node_id: string;
+  event_type: string;
+  threat_details: string;
+}) {
+  await executeSnowflake(
+    `INSERT INTO SENTINEL_DB.PUBLIC.CRISIS_EVENTS (NODE_ID, EVENT_TYPE, THREAT_DETAILS)
+     VALUES (?, ?, ?)`,
+    [input.node_id, input.event_type, input.threat_details]
+  );
+
+  return { success: true };
+}
+
+export async function getActiveCrisisEvents() {
+  return executeSnowflake<ThreatLogRow>(
+    `SELECT *
+     FROM CRISIS_EVENTS
+     WHERE IS_ACTIVE = TRUE
+     ORDER BY TIMESTAMP DESC`
+  );
 }
 
 export async function logThreat(row: {
@@ -73,24 +116,23 @@ export async function logThreat(row: {
   event_type: string;
   details: string;
 }) {
-  const conn = await getConnection();
-  await execSql(
-    conn,
-    `INSERT INTO THREAT_ALERTS (NODE_ID, EVENT_TYPE, DETAILS) VALUES (?, ?, ?)`,
+  await executeSnowflake(
+    `INSERT INTO SENTINEL_DB.PUBLIC.CRISIS_EVENTS (NODE_ID, EVENT_TYPE, THREAT_DETAILS)
+     VALUES (?, ?, ?)`,
     [row.node_id, row.event_type, row.details]
   );
+
   return { success: true };
 }
 
 export async function fetchHistory(limit = 50) {
-  const conn = await getConnection();
-  const rows = await execSql<ThreatLogRow>(
-    conn,
-    `SELECT TIMESTAMP, NODE_ID, EVENT_TYPE, DETAILS
-       FROM THREAT_ALERTS
-       ORDER BY TIMESTAMP DESC
-       LIMIT ?`,
+  const rows = await executeSnowflake<ThreatLogRow>(
+    `SELECT TIMESTAMP, NODE_ID, EVENT_TYPE, THREAT_DETAILS, IS_ACTIVE
+     FROM SENTINEL_DB.PUBLIC.CRISIS_EVENTS
+     ORDER BY TIMESTAMP DESC
+     LIMIT ?`,
     [limit]
   );
+
   return rows;
 }
